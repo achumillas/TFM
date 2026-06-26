@@ -1,0 +1,795 @@
+---
+title: "ROCpAUC: Partial Area Indexes for ROC Curve Analysis"
+subtitle: "A Bioconductor Package for High-Specificity and High-Sensitivity Biomarker Evaluation"
+author: "Agustín Chumillas Roldán"
+date: "`r Sys.Date()`"
+output:
+  BiocStyle::html_document:
+    toc: yes
+    toc_float: yes
+    theme: spacelab
+    number_sections: yes
+    df_print: paged
+    highlight: kate
+    code_folding: show
+  BiocStyle::pdf_document:
+    toc: yes
+    number_sections: yes
+    latex_engine: pdflatex
+    fig_caption: yes
+vignette: >
+  %\VignetteEncoding{UTF-8}
+  %\VignetteIndexEntry{ROCpAUC: Partial Area Indexes for ROC Curve Analysis}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo      = TRUE,
+  message   = FALSE,
+  warning   = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 6,
+  comment   = "#>"
+)
+```
+
+# Introduction
+
+The **ROCpAIv2** package provides a comprehensive framework for
+evaluating the discriminatory performance of biomarkers and classifiers
+via partial area under the ROC curve (pAUC) indexes.
+
+The Receiver Operating Characteristic (ROC) curve plots the True
+Positive Rate (TPR, sensitivity) against the False Positive Rate (FPR, 1
+− specificity) at all classification thresholds. While the full AUC
+summarises global performance, clinical practice often requires
+restricting evaluation to a region of high specificity (low FPR) or high
+sensitivity (high TPR). This package implements all four major scaled
+partial-area indexes from the literature:
+
+| Index | Domain | Condition for validity | Reference |
+|---------------|---------------|-----------------------------|---------------|
+| **MCpAUC** | High specificity (FPR) | Proper ROC curve (above the diagonal) | McClish (1989) |
+| **TpAUC** | High specificity (FPR) | Any ROC curve shape | Vivo *et al.* (2018) |
+| **NpAUC** | High sensitivity (TPR) | NLR-bounded curve | Jiang *et al.* (1996) |
+| **FpAUC** | High sensitivity (TPR) | Any ROC curve shape | Franco & Vivo (2021) |
+
+All main functions accept either a `data.frame` or a
+`SummarizedExperiment` as input, return results as a `tibble` or
+`SummarizedExperiment`, generate publication-quality ROC plots with
+shaded partial-area regions, and provide bootstrap confidence intervals.
+
+## Installation
+
+```{r install, eval = FALSE}
+
+# Install from Bioconductor
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("ROCpAIv2")
+
+library("ROCpAIv2")
+```
+
+------------------------------------------------------------------------
+
+```{r include=FALSE}
+
+library(dplyr)
+library("ROCpAUC")
+
+```
+
+## Set Seed
+
+```{r Set Seed}
+
+# Set a random seed for reproducibility of all bootstrap and stochastic results
+set.seed(1234567)
+
+```
+
+------------------------------------------------------------------------
+
+# Load Example Dataset
+
+```{r Load Sp Data}
+
+# RNA-seq data for Schizosaccharomyces pombe (fission yeast) — main demo dataset
+library(fission)
+
+# Load the fission SummarizedExperiment (RNA-seq, S. pombe, wild-type vs mut7 strain)
+data(fission)
+
+# Select five genes of interest for all package demonstrations
+genes_of_interest = c(
+  "SPNCRNA.1080",   # non-coding RNA, used as a low-AUC control
+  "SPAC186.08c",    # protein-coding gene
+  "SPNCRNA.1420",   # non-coding RNA
+  "SPCC70.08c",     # protein-coding gene
+  "SPAC212.04c"     # protein-coding gene
+)
+
+# Build a plain data.frame version for demos that use data.frame input.
+# Rows = samples, first column = binary strain label (wt vs mut7), rest = expression.
+strain_vector = colData(fission)$strain
+expr_matrix_t = t(assay(fission)[genes_of_interest, ])
+Sp = as.data.frame(cbind(strain = strain_vector, expr_matrix_t))
+
+# Inspect the first rows and verify column types
+head(Sp)
+col_classes = sapply(Sp, class)
+table(col_classes)
+
+```
+
+------------------------------------------------------------------------
+
+# Empirical ROC Curve — `pointsCurve`
+
+Calculates the ROC curve coordinates — False Positive Rate (FPR) and
+True Positive Rate (TPR) — from a binary reference vector and a
+continuous or ordinal predictor. Optionally displays the ROC curve using
+\code{ggplot2}.
+
+## Demo
+
+```{r demo-pointscurve-df}
+
+# Input type 1: plain data.frame
+# Plot the empirical ROC curve for the first gene using the pre-built Sp data.frame
+pointsCurve(Sp[, 1], as.numeric(Sp[, 2]),
+            plot  = TRUE,
+            label = colnames(Sp)[2])
+
+```
+
+```{r demo-pointscurve-se}
+
+# Input type 2: vectors extracted directly from a SummarizedExperiment
+# Extract outcome and predictor from the SE object and pass them as vectors
+outcome = SummarizedExperiment::colData(fission)$strain
+expr    = SummarizedExperiment::assay(fission)["SPNCRNA.1080", ]
+
+pointsCurve(as.numeric(outcome), as.numeric(expr),
+            plot  = TRUE,
+            label = "SPNCRNA.1080 (from SE)")
+
+```
+
+# Point-Estimate Functions {#point-estimate}
+
+## pAUC — Raw Partial Area Under the ROC Curve
+
+Returns the trapezoidal pAUC for a given FPR or TPR interval without any
+scaling. Useful as a diagnostic building block or for direct comparison
+with software that reports raw pAUC values. All four scaled indexes
+(MCpAUC,TpAUC, NpAUC, FpAUC) are derived from this quantity
+
+$$AUC = \int_0^1 TPR(FPR) \, d(FPR)$$
+
+$$pAUC_{(t_1, t_2)} = \int_{t_1}^{t_2} TPR(FPR) \, d(FPR)$$
+
+### Demo — pAUC
+
+```{r demo-pauc-fpr-se}
+
+# Input type 1: SummarizedExperiment, FPR domain [0, 0.25]
+pAUC(fission, low.value = 0, up.value = 0.25,
+     axis = "x", selection = genes_of_interest, variable = "strain")
+
+```
+
+```{r demo-pauc-tpr-se}
+
+# Input type 2: SummarizedExperiment, TPR domain [0.9, 1]
+pAUC(fission, low.value = 0.9, up.value = 1,
+     axis = "y", selection = genes_of_interest, variable = "strain")
+
+```
+
+```{r demo-pauc-df}
+
+# Input type 3: plain data.frame, FPR domain
+pAUC(Sp, low.value = 0, up.value = 0.25, axis = "x")
+
+```
+
+------------------------------------------------------------------------
+
+## MCpAUC — McClish Standardised pAUC
+
+The **MCpAUC** index (McClish, 1989) rescales the raw partial area to
+$[0.5, 1]$ using the diagonal as the minimum reference. Defined only for
+*proper* ROC curves (above the diagonal throughout the region of
+interest):
+
+$$\widetilde{A}_{(t_1,t_2)} = \frac{1}{2}\!\left(1 + \frac{A_{(t_1,t_2)} - A^{\min}_{(t_1,t_2)}}{A^{\max}_{(t_1,t_2)} - A^{\min}_{(t_1,t_2)}}\right)$$
+
+### Demo — MCpAUC
+
+```{r demo-mcpauc-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with plots)
+res_MC = MCpAUC(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  plot = TRUE, plot_type = "both", plots_per_page = 5
+)
+res_MC
+
+```
+
+```{r demo-mcpauc-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+se_MC = MCpAUC(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  output_as_SE = TRUE
+)
+assay(se_MC)
+
+```
+
+```{r demo-mcpauc-df}
+
+# Input type 3: plain data.frame → Output: tibble
+MCpAUC(Sp, low.value = 0, up.value = 0.25)
+
+```
+
+------------------------------------------------------------------------
+
+## TpAUC — Tighter Partial Area Index
+
+The **TpAUC** (Vivo *et al.*, 2018) uses tighter bounds derived from the
+actual TPR values at the interval endpoints, making it valid for both
+proper and improper ROC curves and sensitive to crossing curves with
+equal raw pAUC:
+
+$$A^*_{(t_1,t_2)} = \frac{1}{2}\!\left(1 + \frac{A_{(t_1,t_2)} - A^*_{\min}}{A^*_{\max} - A^*_{\min}}\right)$$
+
+### Demo — TpAUC
+
+```{r demo-tpauc-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with plots)
+res_Tp = TpAUC(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  plot = TRUE, plot_type = "both", plots_per_page = 5
+)
+res_Tp
+
+```
+
+```{r demo-tpauc-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+se_Tp = TpAUC(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  output_as_SE = TRUE
+)
+assay(se_Tp)
+
+```
+
+```{r demo-tpauc-df}
+
+# Input type 3: plain data.frame → Output: tibble
+TpAUC(Sp, low.value = 0, up.value = 0.25)
+
+```
+
+------------------------------------------------------------------------
+
+## NpAUC — Normalised pAUC (High-Sensitivity Domain)
+
+**NpAUC** (Jiang *et al.*, 1996) summarises performance above a minimum
+sensitivity $\text{TPR}_0$ by dividing the horizontal-band pAUC by the
+width of that band:
+
+$$N\widehat{pAUC}_{\text{TPR}_0} = \frac{A_{\text{TPR}_0}}{1 - \text{TPR}_0}$$
+
+Valid only when the NLR is bounded; returns `NA` otherwise.
+
+### Demo — NpAUC
+
+```{r demo-npauc-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with plots)
+res_Np = NpAUC(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  plot = TRUE, plot_type = "both", plots_per_page = 5
+)
+res_Np
+
+```
+
+```{r demo-npauc-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+se_Np = NpAUC(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  output_as_SE = TRUE
+)
+assay(se_Np)
+
+```
+
+```{r demo-npauc-df}
+
+# Input type 3: plain data.frame → Output: tibble
+NpAUC(Sp, low.value = 0.9, up.value = 1)
+
+```
+
+------------------------------------------------------------------------
+
+## FpAUC — Fitted Partial Area Index
+
+**FpAUC** (Franco & Vivo, 2021) extends NpAUC using tighter NLR-based
+bounds valid for *any* ROC curve shape. Always lies in $[0.5, 1]$ and
+distinguishes crossing curves with equal raw pAUC.
+
+| Case | NLR condition | FpAUC formula |
+|-----------------|----------------------------|----------------------------|
+| **Bounded** | $\text{NLR}(x) \leq \text{NLR}_0$ | $A_{TPR_0} \,/\, [(1-\text{FPR}_0)(1-\text{TPR}_0)]$ |
+| **Partially proper** | $\text{NLR}(x) \leq 1$ | $[A_{TPR_0} + (1-\text{TPR}_0)(1-\text{FPR}_0)] \,/\, [2(1-\text{FPR}_0)(1-\text{TPR}_0)]$ |
+| **Improper** | Some $\text{NLR}(x) > 1$ | $[A_{TPR_0} + (1+\text{TPR}_0)(\text{TPR}_0-\text{FPR}_0)] \,/\, [(1+\text{TPR}_0-2\text{FPR}_0)(1-\text{TPR}_0)]$ |
+
+### Demo — FpAUC
+
+```{r demo-fpauc-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with plots)
+res_Fp = FpAUC(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  plot = TRUE, plot_type = "both", plots_per_page = 5
+)
+res_Fp
+
+```
+
+```{r demo-fpauc-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+se_Fp = FpAUC(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  output_as_SE = TRUE
+)
+assay(se_Fp)
+
+```
+
+```{r demo-fpauc-df}
+
+# Input type 3: plain data.frame → Output: tibble
+FpAUC(Sp, low.value = 0.9, up.value = 1)
+
+```
+
+------------------------------------------------------------------------
+
+## allIndices — All Four Indexes in One Call
+
+Convenience wrapper that runs \code{MCpAUC}, \code{TpAUC}, \code{NpAUC},
+and \code{FpAUC} and joins the results into a single wide \code{tibble}.
+FPR-domain indexes (MCpAUC, TpAUC) use \code{fpr.low} / \code{fpr.up};
+TPR-domain indexes (NpAUC, FpAUC) use \code{tpr.low} / \code{tpr.up}.
+This is the recommended entry point for exploratory multi-index
+comparison.
+
+### Demo — allIndices
+
+```{r demo-allindices-se}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with plots)
+allIndices(
+  fission,
+  fpr.low = 0, fpr.up = 0.25,
+  tpr.low = 0.9, tpr.up = 1,
+  selection = genes_of_interest, variable = "strain",
+  plot = TRUE, plot_type = "both", plots_per_page = 5
+)
+
+```
+
+```{r demo-allindices-df}
+
+# Input type 2: plain data.frame → Output: tibble
+allIndices(
+  Sp,
+  fpr.low = 0, fpr.up = 0.25,
+  tpr.low = 0.9, tpr.up = 1
+)
+
+```
+
+------------------------------------------------------------------------
+
+# Bootstrap Confidence Interval Functions {#bootstrap}
+
+## MCpAUCboot
+
+Estimates confidence intervals for the McClish standardised pAUC
+(MCpAUC) via nonparametric bootstrap resampling. Variables for which
+MCpAUC is undefined on the original sample (improper ROC curves) are
+automatically skipped and return NA in all output columns.
+
+### Demo — MCpAUCboot
+
+```{r demo-mcpaucboot-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with diagnostic plots)
+boot_MC = MCpAUCboot(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, plot = TRUE, plot_type = "both"
+)
+boot_MC
+
+```
+
+```{r demo-mcpaucboot-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+boot_MC_se = MCpAUCboot(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, output_as_SE = TRUE
+)
+assay(boot_MC_se)
+
+```
+
+```{r demo-mcpaucboot-df}
+
+# Input type 3: plain data.frame → Output: tibble
+MCpAUCboot(Sp, low.value = 0, up.value = 0.25, r = 100)
+
+```
+
+------------------------------------------------------------------------
+
+## TpAUCboot
+
+Estimates confidence intervals for the tighter partial area index
+(TpAUC) via nonparametric bootstrap resampling. Because TpAUC is valid
+for any ROC curve shape, no variables are skipped (no NA from shape
+conditions).
+
+### Demo — TpAUCboot
+
+```{r demo-tpaucboot-se}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with diagnostic plots)
+boot_Tp = TpAUCboot(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, plot = TRUE, plot_type = "both"
+)
+boot_Tp
+
+```
+
+```{r demo-tpaucboot-df}
+
+# Input type 2: plain data.frame → Output: tibble
+TpAUCboot(Sp, low.value = 0, up.value = 0.25, r = 100)
+
+```
+
+------------------------------------------------------------------------
+
+## NpAUCboot
+
+Estimates confidence intervals for the normalised partial AUC (NpAUC)
+via nonparametric bootstrap resampling. Variables for which NpAUC is
+undefined (NLR condition not satisfied) on the original sample are
+automatically skipped and return NA in all output columns. Consider
+FpAUCboot for those variables.
+
+### Demo — NpAUCboot
+
+```{r demo-npaucboot-se}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with diagnostic plots)
+boot_Np = NpAUCboot(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, plot = TRUE, plot_type = "both"
+)
+boot_Np
+
+```
+
+```{r demo-npaucboot-df}
+
+# Input type 2: plain data.frame → Output: tibble
+NpAUCboot(Sp, low.value = 0.9, up.value = 1, r = 100)
+
+```
+
+------------------------------------------------------------------------
+
+## FpAUCboot
+
+Estimates confidence intervals for the fitted partial area index (FpAUC)
+via nonparametric bootstrap resampling. Because FpAUC is valid for any
+ROC curve shape, no variables are skipped. This makes FpAUCboot the most
+robust bootstrap function in the package, especially useful when
+NpAUCboot returns NA for some variables.
+
+### Demo — FpAUCboot
+
+```{r demo-fpaucboot-se-tibble}
+
+# Input type 1: SummarizedExperiment → Output: tibble (with diagnostic plots)
+boot_Fp = FpAUCboot(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, plot = TRUE, plot_type = "both"
+)
+boot_Fp
+
+```
+
+```{r demo-fpaucboot-se-se}
+
+# Input type 2: SummarizedExperiment → Output: SummarizedExperiment
+boot_Fp_se = FpAUCboot(
+  fission,
+  low.value = 0.9, up.value = 1,
+  selection = genes_of_interest, variable = "strain",
+  r = 100, output_as_SE = TRUE
+)
+assay(boot_Fp_se)
+
+```
+
+```{r demo-fpaucboot-df}
+
+# Input type 3: plain data.frame → Output: tibble
+FpAUCboot(Sp, low.value = 0.9, up.value = 1, r = 100)
+
+```
+
+------------------------------------------------------------------------
+
+# Comparative Summary Tables {#summary}
+
+## Point-Estimate Indexes
+
+Combine all four point-estimate tibbles side by side into one summary
+table. pAUC_FPR = raw FPR-domain pAUC (basis for MCpAUC and TpAUC)
+pAUC_TPR = raw TPR-domain pAUC (basis for NpAUC and FpAUC)
+
+```{r summary-point-estimates}
+
+summary_tbl = res_MC %>%
+  dplyr::rename(pAUC_FPR = pAUC) %>%
+  dplyr::left_join(
+    dplyr::select(res_Tp, Variable, TpAUC),
+    by = "Variable"
+  ) %>%
+  dplyr::left_join(
+    dplyr::select(res_Np, Variable, NpAUC, pAUC_TPR = pAUC),
+    by = "Variable"
+  ) %>%
+  dplyr::left_join(
+    dplyr::select(res_Fp, Variable, FpAUC),
+    by = "Variable"
+  ) %>%
+  dplyr::select(Variable, pAUC_FPR, MCpAUC, TpAUC, pAUC_TPR, NpAUC, FpAUC)
+
+summary_tbl
+
+```
+
+------------------------------------------------------------------------
+
+## Bootstrap Confidence Intervals
+
+Build transposed bootstrap summary tables: genes as columns, metrics as
+rows. This layout makes it easy to compare the same metric across genes
+at a glance.
+
+```{r summary-bootstrap}
+
+# Build transposed bootstrap summary tables: genes as columns, metrics as rows.
+# This layout makes it easy to compare the same metric across genes at a glance.
+
+# Helper: pivot one bootstrap result to a metric × gene matrix
+make_boot_matrix = function(boot_tbl, index_col) {
+  # Reshape: one row per metric (estimate, bias, sd, lwr, upr), one column per gene
+  metrics = c(index_col, "bias", "sd", "lwr", "upr")
+  mat = t(as.matrix(boot_tbl[, metrics]))
+  colnames(mat) = boot_tbl$Variable
+  rownames(mat) = metrics
+  return(as.data.frame(round(mat, 6)))
+}
+
+# FPR-domain bootstrap summary (MCpAUC and TpAUC) — genes as columns
+cat("Bootstrap Summary — MCpAUC (FPR in [0, 0.25])\n")
+make_boot_matrix(boot_MC, "MCpAUC")
+
+```
+
+```{r summary-bootstrap-Tp}
+
+cat("Bootstrap Summary — TpAUC (FPR in [0, 0.25])\n")
+make_boot_matrix(boot_Tp, "TpAUC")
+
+```
+
+```{r summary-bootstrap-Np}
+
+cat("Bootstrap Summary — NpAUC (TPR in [0.9, 1])\n")
+make_boot_matrix(boot_Np, "NpAUC")
+
+```
+
+```{r summary-bootstrap-Fp}
+
+cat("Bootstrap Summary — FpAUC (TPR in [0.9, 1])\n")
+make_boot_matrix(boot_Fp, "FpAUC")
+
+```
+
+------------------------------------------------------------------------
+
+# SummarizedExperiment Output Demo {#se-demo}
+
+Return MCpAUC results as a SummarizedExperiment for downstream
+Bioconductor workflows (e.g., integration with DESeq2 or limma
+
+```{r demo-se-assay}
+
+se_MC = MCpAUC(
+  fission,
+  low.value = 0, up.value = 0.25,
+  selection = genes_of_interest, variable = "strain",
+  output_as_SE = TRUE
+)
+
+# The assay matrix: rows = metrics (MCpAUC and pAUC), columns = predictor variables
+assay(se_MC)
+
+```
+
+```{r demo-se-rowdata}
+
+# Row metadata: names of the computed metrics stored in the assay
+rowData(se_MC)
+
+```
+
+```{r demo-se-coldata}
+
+# Column metadata: names of the predictor variables
+colData(se_MC)
+
+```
+
+------------------------------------------------------------------------
+
+# References
+
+Alon, U., Barkai, N., Notterman, D. A., Gish, K., Ybarra, S., Mack, D.,
+& Levine, A. J. (1999). Broad patterns of gene expression revealed by
+clustering analysis of tumor and normal colon tissues probed by
+oligonucleotide arrays. *Proceedings of the National Academy of
+Sciences*, *96*(12), 6745–6750.
+<https://doi.org/10.1073/pnas.96.12.6745>
+
+Bandos, A. I., Guo, B., & Gur, D. (2017). Estimating the area under ROC
+curve when the fitted binormal curves demonstrate improper shape.
+*Academic Radiology*, *24*(2), 209–219.
+<https://doi.org/10.1016/j.acra.2016.09.020>
+
+Canty, A., & Ripley, B. D. (2019). *boot: Bootstrap R (S-Plus)
+functions* (R package version 1.3-24) [Software]. CRAN.
+<https://CRAN.R-project.org/package=boot>
+
+Davison, A. C., & Hinkley, D. V. (1997). *Bootstrap methods and their
+application*. Cambridge University Press.
+<https://doi.org/10.1017/CBO9780511802843>
+
+Dudoit, S., Fridlyand, J., & Speed, T. P. (2002). Comparison of
+discrimination methods for the classification of tumors using gene
+expression data. *Journal of the American Statistical Association*,
+*97*(457), 77–87. <https://doi.org/10.1198/016214502753479248>
+
+Fawcett, T. (2006). An introduction to ROC analysis. *Pattern
+Recognition Letters*, *27*(8), 861–874.
+<https://doi.org/10.1016/j.patrec.2005.10.010>
+
+Franco, M., & Vivo, J.-M. (2021). Evaluating the performances of
+biomarkers over a restricted domain of high sensitivity. *Mathematics*,
+*9*(21), 2826. <https://doi.org/10.3390/math9212826>
+
+García, J.-P., Franco, M., & Vivo, J.-M. (2021). *ROCpAI: Receiver
+Operating Characteristic Partial Area Indexes for evaluating
+classifiers* [Bioconductor package].
+<http://bioconductor.org/packages/ROCpAI/>
+
+Golub, T. R., Slonim, D. K., Tamayo, P., Huard, C., Gaasenbeek, M.,
+Mesirov, J. P., Coller, H., Loh, M. L., Downing, J. R., Caligiuri, M.
+A., Bloomfield, C. D., & Lander, E. S. (1999). Molecular classification
+of cancer: Class discovery and class prediction by gene expression
+monitoring. *Science*, *286*(5439), 531–537.
+<https://doi.org/10.1126/science.286.5439.531>
+
+Greiner, M., Pfeiffer, D., & Smith, R. D. (2000). Principles and
+practical application of the receiver-operating characteristic analysis
+for diagnostic tests. *Preventive Veterinary Medicine*, *45*(1–2),
+23–41.
+[https://doi.org/10.1016/S0167-5877(00)00115-X](https://doi.org/10.1016/S0167-5877(00)00115-X){.uri}
+
+Jiang, Y., Metz, C. E., & Nishikawa, R. M. (1996). A receiver operating
+characteristic partial area index for highly sensitive diagnostic tests.
+*Radiology*, *201*(3), 745–750.
+<https://doi.org/10.1148/radiology.201.3.8939225>
+
+Leong, H. S., Dawson, K., Wirth, C., Li, Y., Connolly, Y., Smith, D. L.,
+Wilkinson, C. R. M., & Miller, C. J. (2014). A global non-coding RNA
+system modulates fission yeast protein levels in response to stress.
+*Nature Communications*, *5*, 3947. <https://doi.org/10.1038/ncomms4947>
+
+Marguerat, S., Schmidt, A., Codlin, S., Chen, W., Aebersold, R., &
+Bähler, J. (2012). Quantitative analysis of fission yeast transcriptomes
+and proteomes in proliferating and quiescent cells. *Cell*, *151*(3),
+671–683. <https://doi.org/10.1016/j.cell.2012.09.019>
+
+McClish, D. K. (1989). Analyzing a portion of the ROC curve. *Medical
+Decision Making*, *9*(3), 190–195.
+<https://doi.org/10.1177/0272989X8900900307>
+
+Metz, C. E. (1978). Basic principles of ROC analysis. *Seminars in
+Nuclear Medicine*, *8*(4), 283–298.
+[https://doi.org/10.1016/S0001-2998(78)80014-2](https://doi.org/10.1016/S0001-2998(78)80014-2){.uri}
+
+Morgan, M., Obenchain, V., Hester, J., & Pagès, H. (n.d.).
+*SummarizedExperiment: A container (S4 class) for matrix-like assays*
+[Bioconductor package].
+<https://bioconductor.org/packages/SummarizedExperiment>
+
+Pepe, M. S., Longton, G., Anderson, G. L., & Schummer, M. (2003).
+Selecting differentially expressed genes from microarray experiments.
+*Biometrics*, *59*(1), 133–142.
+<https://doi.org/10.1111/1541-0420.00016>
+
+Thompson, M. L., & Zucchini, W. (1989). On the statistical analysis of
+ROC curves. *Statistics in Medicine*, *8*(10), 1277–1290.
+<https://doi.org/10.1002/sim.4780081011>
+
+Vivo, J.-M., Franco, M., & Vicari, D. (2018). Rethinking an ROC partial
+area index for evaluating the classification performance at a high
+specificity range. *Advances in Data Analysis and Classification*,
+*12*(3), 683–704. <https://doi.org/10.1007/s11634-017-0295-9>

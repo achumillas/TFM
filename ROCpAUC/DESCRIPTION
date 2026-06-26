@@ -1,0 +1,59 @@
+Package: ROCpAUC
+Title: Receiver Operating Characteristic Partial Area Indexes for Evaluating Classifiers
+Version: 0.99.5
+Date: 2026-04-14
+Authors@R: c(
+    person("Agustín", "Chumillas", , "a.chumillasroldan@um.es", role = c("aut", "cre"),
+           comment = c(ORCID = "")),
+    person("Juan-Pedro", "Garcia", , "juanpedro.garcia4@um.es", role = "aut",
+           comment = c(ORCID = "")),
+    person("Manuel", "Franco", , "mfranco@um.es", role = "aut",
+           comment = c(ORCID = "")),
+    person("Juana-María", "Vivo", , "jmvivomo@um.es", role = "aut",
+           comment = c(ORCID = ""))
+  )
+Description: ROCpAIv2 provides a unified framework for computing and comparing
+    standardized partial area under the ROC curve (pAUC) in the evaluation of
+    binary classifiers, particularly in restricted regions of clinical interest.
+    The package implements four scaled indexes tailored to different ROC curve
+    behaviours: MCpAUC (McClish 1989), TpAUC (Vivo et al. 2018), NpAUC
+    (Jiang et al. 1996) for the high-specificity and high-sensitivity domains,
+    and FpAUC (Franco and Vivo 2021) for any curve shape, including improper
+    ROC curves. All indexes are supported by nonparametric bootstrap confidence
+    intervals. ROCpAIv2 accepts both data.frame and SummarizedExperiment inputs,
+    returns results as tibble or SummarizedExperiment, and produces
+    publication-quality ROC curve plots with shaded partial-area regions. It is
+    designed for full compatibility with Bioconductor pipelines, making it
+    suitable for high-throughput biomarker discovery applications.
+License: GPL-3
+Encoding: UTF-8
+LazyData: false
+VignetteBuilder: knitr
+Depends: R (>= 4.1.0)
+Imports:
+    methods,
+    stats,
+    boot,
+    dplyr,
+    ggplot2,
+    gridExtra,
+    scales,
+    SummarizedExperiment,
+    S4Vectors,
+    tibble,
+    tidyr,
+    tidyselect
+Suggests:
+    BiocManager,
+    BiocStyle,
+    fission,
+    golubEsets,
+    plsgenomics,
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+URL: https://github.com/juanpegarcia/ROCpAI
+BugReports: https://github.com/juanpegarcia/ROCpAI/issues
+biocViews: Software, ROC, Classification, StatisticalMethod,
+    BiomedicalInformatics, Visualization
+Config/roxygen2/version: 8.0.0

@@ -1,0 +1,58 @@
+bibentry(
+  bibtype  = "Article",
+  title    = "Rethinking an ROC partial area index for evaluating the classification performance at a high specificity range",
+  author   = c(
+    person("Juana-María", "Vivo"),
+    person("Manuel",      "Franco"),
+    person("Donatella",   "Vicari")
+  ),
+  journal  = "Advances in Data Analysis and Classification",
+  year     = "2018",
+  volume   = "12",
+  number   = "3",
+  pages    = "683--704",
+  doi      = "10.1007/s11634-017-0295-9"
+)
+
+bibentry(
+  bibtype  = "Article",
+  title    = "Evaluating the performances of biomarkers over a restricted domain of high sensitivity",
+  author   = c(
+    person("Manuel",      "Franco"),
+    person("Juana-María", "Vivo")
+  ),
+  journal  = "Mathematics",
+  year     = "2021",
+  volume   = "9",
+  number   = "21",
+  pages    = "2826",
+  doi      = "10.3390/math9212826"
+)
+
+bibentry(
+  bibtype  = "Article",
+  title    = "Analyzing a portion of the ROC curve",
+  author   = person("Donna K.", "McClish"),
+  journal  = "Medical Decision Making",
+  year     = "1989",
+  volume   = "9",
+  number   = "3",
+  pages    = "190--195",
+  doi      = "10.1177/0272989X8900900307"
+)
+
+bibentry(
+  bibtype  = "Article",
+  title    = "A receiver operating characteristic partial area index for highly sensitive diagnostic tests",
+  author   = c(
+    person("Yulei",     "Jiang"),
+    person("Charles E.", "Metz"),
+    person("Robert M.", "Nishikawa")
+  ),
+  journal  = "Radiology",
+  year     = "1996",
+  volume   = "201",
+  number   = "3",
+  pages    = "745--750",
+  doi      = "10.1148/radiology.201.3.8939225"
+)
