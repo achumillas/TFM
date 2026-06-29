@@ -377,7 +377,7 @@ TpAUC = function(dataset, low.value = 0, up.value = 1, plot = FALSE,
 # Description:
 #   Computes the normalised partial area index (NpAUC) over a restricted TPR
 #   interval [low.value, up.value]. The raw horizontal-band pAUC is divided
-#   by (1 - TPR0), giving a value in [0.5, 1]. Returns NA when the NLR
+#   by (1 - TPR0), giving a value in [(1 - TPR0)/2, 1]. Returns NA when the NLR
 #   condition is not satisfied (curve is not NLR-bounded). For those cases,
 #   use FpAUC instead.
 #
@@ -673,9 +673,6 @@ FpAUC = function(dataset, low.value = 0.9, up.value = 1, plot = FALSE,
 #'   McClish, D.K. (1989). Analyzing a portion of the ROC curve.
 #'   \emph{Medical Decision Making}, 9(3), 190--195.
 #'
-#'   Thompson, M.L. & Zucchini, W. (1989). On the statistical analysis of
-#'   ROC curves. \emph{Statistics in Medicine}, 8(10), 1277--1294.
-#'
 #'   Jiang, Y., Metz, C.E. & Nishikawa, R.M. (1996). A receiver operating
 #'   characteristic partial area index for highly sensitive diagnostic tests.
 #'   \emph{Radiology}, 201(3), 745--750.
@@ -963,13 +960,25 @@ MCpAUCboot = function(dataset, low.value = 0, up.value = 1,
 #' expr   = t(SummarizedExperiment::assay(fission)[genes_of_interest, ])
 #' Sp     = as.data.frame(cbind(strain = strain, expr))
 #'
-#' # Input type 1: SummarizedExperiment -> tibble (with diagnostic plots)
-#' boot_Tp = TpAUCboot(fission, low.value = 0, up.value = 0.25,
-#'                     selection = genes_of_interest, variable = "strain",
-#'                     r = 100, plot = TRUE, plot_type = "both")
+#' # Input type 1: SummarizedExperiment -> Output: tibble (with diagnostic plots)
+#' boot_Tp = TpAUCboot(
+#'   fission,
+#'   low.value = 0, up.value = 0.25,
+#'   selection = genes_of_interest, variable = "strain",
+#'   r = 100, plot = TRUE, plot_type = "both"
+#' )
 #' boot_Tp
 #'
-#' # Input type 2: plain data.frame -> tibble
+#' # Input type 2: SummarizedExperiment -> Output: SummarizedExperiment
+#' boot_Tp_se = TpAUCboot(
+#'   fission,
+#'   low.value = 0, up.value = 0.25,
+#'   selection = genes_of_interest, variable = "strain",
+#'   r = 100, output_as_SE = TRUE
+#' )
+#' assay(boot_Tp_se)
+#'
+#' # Input type 3: plain data.frame -> Output: tibble
 #' TpAUCboot(Sp, low.value = 0, up.value = 0.25, r = 100)
 #' @export
 TpAUCboot = function(dataset, low.value = 0, up.value = 1,
@@ -1087,14 +1096,27 @@ TpAUCboot = function(dataset, low.value = 0, up.value = 1,
 #' expr   = t(SummarizedExperiment::assay(fission)[genes_of_interest, ])
 #' Sp     = as.data.frame(cbind(strain = strain, expr))
 #'
-#' # Input type 1: SummarizedExperiment -> tibble (with diagnostic plots)
+#' # Input type 1: SummarizedExperiment -> Output: tibble (with diagnostic plots)
 #' # Note: variables where NpAUC is undefined (NLR condition not satisfied) return NA
-#' boot_Np = NpAUCboot(fission, low.value = 0.9, up.value = 1,
-#'                     selection = genes_of_interest, variable = "strain",
-#'                     r = 100, plot = TRUE, plot_type = "both")
+#' boot_Np = NpAUCboot(
+#'   fission,
+#'   low.value = 0.9, up.value = 1,
+#'   selection = genes_of_interest, variable = "strain",
+#'   r = 100, plot = TRUE, plot_type = "both"
+#' )
 #' boot_Np
 #'
-#' # Input type 2: plain data.frame -> tibble
+#' # Input type 2: SummarizedExperiment -> Output: SummarizedExperiment
+#' # Variables with undefined NpAUC return NA in all columns of the assay
+#' boot_Np_se = NpAUCboot(
+#'   fission,
+#'   low.value = 0.9, up.value = 1,
+#'   selection = genes_of_interest, variable = "strain",
+#'   r = 100, output_as_SE = TRUE
+#' )
+#' assay(boot_Np_se)
+#'
+#' # Input type 3: plain data.frame -> Output: tibble
 #' NpAUCboot(Sp, low.value = 0.9, up.value = 1, r = 100)
 #' @export
 NpAUCboot = function(dataset, low.value = 0.9, up.value = 1,
